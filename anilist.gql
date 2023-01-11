@@ -1,0 +1,14 @@
+query {
+    Viewer {
+        id
+        name
+        statistics {
+            anime {
+                count
+            }
+            manga {
+                count
+            }
+        }
+    }
+}

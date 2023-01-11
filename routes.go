@@ -1,14 +1,10 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
-	"github.com/disgoorg/disgo/discord"
-	"github.com/disgoorg/json"
-	"io"
 	"math/rand"
 	"net/http"
-	"strconv"
+
+	"github.com/disgoorg/disgo/discord"
 )
 
 func (a *Anicord) handleVerify(w http.ResponseWriter, r *http.Request) {
@@ -23,6 +19,7 @@ func (a *Anicord) handleDiscord(w http.ResponseWriter, r *http.Request) {
 	)
 	if code == "" || state == "" {
 		writeError(w, "invalid request", nil)
+		return
 	}
 
 	identifier := randStr(32)
@@ -43,6 +40,7 @@ func (a *Anicord) handleAnilist(w http.ResponseWriter, r *http.Request) {
 	)
 	if code == "" || state == "" {
 		writeError(w, "invalid request", nil)
+		return
 	}
 
 	session := a.oauth2.SessionController().GetSession(state)
@@ -51,75 +49,34 @@ func (a *Anicord) handleAnilist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	discordUser, err := a.oauth2.GetUser(session)
+	if err != nil {
+		writeError(w, "error while getting user", err)
+		return
+	}
+
 	token, err := a.anilist.Exchange(r.Context(), code)
 	if err != nil {
 		writeError(w, "error while exchanging token", err)
 		return
 	}
-	httpClient := a.anilist.Client(r.Context(), token)
 
-	body := map[string]any{
-		"query": `
-			query {
-				Viewer {
-					id
-					name
-					statistics {
-						anime {
-							count
-						}
-						manga {
-							count
-						}
-					}
-				}
-			}`,
-		"variables": map[string]any{
-			"userId": token.Extra("user_id"),
-		},
+	user := User{
+		DiscordID:           discordUser.ID,
+		DiscordAccessToken:  session.AccessToken(),
+		DiscordRefreshToken: session.RefreshToken(),
+		DiscordExpiry:       session.Expiration(),
+		AnilistAccessToken:  token.AccessToken,
+		AnilistRefreshToken: token.RefreshToken,
+		AnilistExpiry:       token.Expiry,
 	}
-
-	data, err := json.Marshal(body)
-	if err != nil {
-		writeError(w, "error while marshaling gql body", err)
+	if err = a.db.CreateUser(user); err != nil {
+		writeError(w, "error while creating user in db", err)
 		return
 	}
 
-	rq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(data))
-	if err != nil {
-		writeError(w, "error while creating request", err)
-		return
-	}
-
-	rq.Header.Set("Content-Type", "application/json")
-	rq.Header.Set("Accept", "application/json")
-
-	rs, err := httpClient.Do(rq)
-	if err != nil {
-		writeError(w, "error while executing request", err)
-		return
-	} else if rs.StatusCode != http.StatusOK {
-		rsData, _ := io.ReadAll(rs.Body)
-		writeError(w, "invalid status code", fmt.Errorf("status code: %d, body: %s", rs.StatusCode, rsData))
-		return
-	}
-	defer rs.Body.Close()
-
-	var v anilistResponse
-	if err = json.NewDecoder(rs.Body).Decode(&v); err != nil {
-		writeError(w, "error while decoding response", err)
-		return
-	}
-
-	if _, err = a.oauth2.UpdateApplicationRoleConnection(session, a.client.ApplicationID(), discord.ApplicationRoleConnectionUpdate{
-		PlatformName:     json.Ptr("Anilist"),
-		PlatformUsername: &v.Data.Viewer.Name,
-		Metadata: &map[string]string{
-			"anime_count": strconv.Itoa(v.Data.Viewer.Statistics.Anime.Count),
-			"manga_count": strconv.Itoa(v.Data.Viewer.Statistics.Manga.Count),
-		},
-	}); err != nil {
-		writeError(w, "error while updating application role connection", err)
+	if err = a.updateUserMetadata(r.Context(), user); err != nil {
+		writeError(w, "error while updating user metadata", err)
 		return
 	}
 

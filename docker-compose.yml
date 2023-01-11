@@ -1,0 +1,11 @@
+version: '3.7'
+
+services:
+    reddit-discord-bot:
+        image: ghcr.io/topisenpai/anicord
+        container_name: anicord-bot
+        restart: unless-stopped
+        env_file:
+            - conf.env
+        ports:
+            - 80:80
