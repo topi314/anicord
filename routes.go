@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/json"
+	"io"
 	"math/rand"
 	"net/http"
 	"strconv"
@@ -59,7 +60,7 @@ func (a *Anicord) handleAnilist(w http.ResponseWriter, r *http.Request) {
 
 	body := map[string]any{
 		"query": `
-			query ($id: Int) {
+			query {
 				Viewer {
 					id
 					name
@@ -98,7 +99,8 @@ func (a *Anicord) handleAnilist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "error while executing request", err)
 		return
 	} else if rs.StatusCode != http.StatusOK {
-		writeError(w, "invalid status code", fmt.Errorf("status code: %d", rs.StatusCode))
+		rsData, _ := io.ReadAll(rs.Body)
+		writeError(w, "invalid status code", fmt.Errorf("status code: %d, body: %s", rs.StatusCode, rsData))
 		return
 	}
 	defer rs.Body.Close()

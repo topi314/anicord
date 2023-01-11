@@ -47,7 +47,7 @@ func (a *Anicord) updateMetadata() error {
 }
 
 func main() {
-	log.SetLevel(log.LevelDebug)
+	log.SetLevel(log.LevelInfo)
 	log.Info("starting Anicord...")
 	log.Infof("disgo %s", disgo.Version)
 
@@ -80,7 +80,7 @@ func main() {
 	mux.HandleFunc("/verify", a.handleVerify)
 	mux.HandleFunc("/discord", a.handleDiscord)
 	mux.HandleFunc("/anilist", a.handleAnilist)
-	_ = http.ListenAndServe(":6969", mux)
+	_ = http.ListenAndServe("0.0.0.0:6969", mux)
 }
 
 type anilistResponse struct {
