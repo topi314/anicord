@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
@@ -22,11 +24,66 @@ import (
 var anilistQuery string
 
 type Anicord struct {
-	client  bot.Client
-	oauth2  oauth2.Client
-	anilist xoauth2.Config
-	db      *DB
-	c       *cron.Cron
+	client      bot.Client
+	oauth2      oauth2.Client
+	anilist     xoauth2.Config
+	rateLimiter *RateLimiter
+	db          *DB
+	c           *cron.Cron
+}
+
+type RateLimiter struct {
+	Limit     int
+	Remaining int
+	Reset     time.Time
+	mu        sync.Mutex
+}
+
+func (r *RateLimiter) Lock() {
+	r.mu.Lock()
+	now := time.Now()
+	if now.After(r.Reset) {
+		r.Reset = now
+		r.Remaining = r.Limit
+	}
+
+	if r.Remaining == 0 {
+		time.Sleep(r.Reset.Sub(now))
+	}
+	r.Remaining--
+}
+
+func (r *RateLimiter) Unlock(rs *http.Response) error {
+	defer r.mu.Unlock()
+	if rs == nil {
+		return nil
+	}
+
+	var (
+		limit      = rs.Header.Get("X-RateLimit-Limit")
+		remaining  = rs.Header.Get("X-RateLimit-Remaining")
+		retryAfter = rs.Header.Get("Retry-After")
+	)
+
+	var err error
+	r.Limit, err = strconv.Atoi(limit)
+	if err != nil {
+		return err
+	}
+	r.Remaining, err = strconv.Atoi(remaining)
+	if err != nil {
+		return err
+	}
+	if retryAfter != "" {
+		var after int
+		after, err = strconv.Atoi(retryAfter)
+		if err != nil {
+			return err
+		}
+		r.Reset = time.Now().Add(time.Duration(after) * time.Second)
+	}
+
+	return nil
 }
 
 func (a *Anicord) updateApplicationMetadata() error {
@@ -76,6 +133,8 @@ func (a *Anicord) updateUserMetadata(ctx context.Context, user User) error {
 		return fmt.Errorf("error while marshaling query: %w", err)
 	}
 
+	a.rateLimiter.Lock()
+
 	rq, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("error while creating gql request: %w", err)
@@ -86,7 +145,11 @@ func (a *Anicord) updateUserMetadata(ctx context.Context, user User) error {
 
 	rs, err := httpClient.Do(rq)
 	if err != nil {
+		_ = a.rateLimiter.Unlock(nil)
 		return fmt.Errorf("error while executing gql request: %w", err)
+	}
+	if err = a.rateLimiter.Unlock(rs); err != nil {
+		a.client.Logger().Errorf("error while updating rate limiter: %s", err)
 	}
 	defer rs.Body.Close()
 

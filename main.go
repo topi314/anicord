@@ -64,6 +64,9 @@ func main() {
 			RedirectURL: baseURL + "/anilist",
 			Scopes:      []string{},
 		},
+		rateLimiter: &RateLimiter{
+			Limit: 1,
+		},
 		db: db,
 		c:  cron.New(),
 	}
