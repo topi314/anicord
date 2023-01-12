@@ -3,7 +3,7 @@ Anicord adds an anilist connection to linked roles and updates the metadata ever
 
 ## Setup
 
-Invite the bot [here](https://discord.com/api/oauth2/authorize?client_id=1062741787992658070&scope=bot%20application.commands)
+Invite the bot [here](https://discord.com/api/oauth2/authorize?client_id=1062741787992658070&scope=bot%20applications.commands)
 
 Go to Server -> Settings -> Roles -> Links -> Add requirement -> Anicord
 
