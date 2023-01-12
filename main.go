@@ -3,8 +3,12 @@ package main
 import (
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/disgoorg/disgo"
+	"github.com/disgoorg/disgo/bot"
+	"github.com/disgoorg/disgo/httpserver"
 	"github.com/disgoorg/disgo/oauth2"
 	"github.com/disgoorg/log"
 	"github.com/robfig/cron/v3"
@@ -14,6 +18,7 @@ import (
 var (
 	discordToken        = os.Getenv("DISCORD_TOKEN")
 	discordClientSecret = os.Getenv("DISCORD_CLIENT_SECRET")
+	discordPublicKey    = os.Getenv("DISCORD_PUBLIC_KEY")
 	baseURL             = os.Getenv("BASE_URL")
 	listenAddr          = os.Getenv("LISTEN_ADDR")
 
@@ -28,7 +33,14 @@ func main() {
 	log.Info("starting Anicord...")
 	log.Infof("disgo %s", disgo.Version)
 
-	client, err := disgo.New(discordToken)
+	mux := http.NewServeMux()
+
+	client, err := disgo.New(discordToken,
+		bot.WithHTTPServerConfigOpts(discordPublicKey,
+			httpserver.WithServeMux(mux),
+			httpserver.WithAddress(listenAddr),
+		),
+	)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -66,9 +78,15 @@ func main() {
 
 	a.c.Start()
 
-	mux := http.NewServeMux()
 	mux.HandleFunc("/verify", a.handleVerify)
 	mux.HandleFunc("/discord", a.handleDiscord)
 	mux.HandleFunc("/anilist", a.handleAnilist)
-	_ = http.ListenAndServe(listenAddr, mux)
+	if err = client.OpenHTTPServer(); err != nil {
+		log.Panic(err)
+	}
+
+	log.Info("Anicord is now running. Press CTRL-C to exit.")
+	s := make(chan os.Signal, 1)
+	signal.Notify(s, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	<-s
 }
