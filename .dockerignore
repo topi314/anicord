@@ -1,5 +1,4 @@
 README.md
 LICENSE
 Dockerfile
-.env
-.env.example
+config.yml

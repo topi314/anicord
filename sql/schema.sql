@@ -1,4 +1,4 @@
-CREATE TABLE users
+CREATE TABLE IF NOT EXISTS users
 (
     discord_id            BIGINT    NOT NULL PRIMARY KEY,
     discord_access_token  VARCHAR   NOT NULL,

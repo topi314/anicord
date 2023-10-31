@@ -1,0 +1,32 @@
+log:
+  level: info # debug, info, warn, error
+  format: text # json, text
+  add_source: true # add source file and line number to log
+  no_color: false # disable color output
+
+server:
+  listen_addr: 0.0.0.0:8080 # listen address
+  base_url: http://localhost:8080 # base url
+
+discord:
+  token: # discord bot token
+  client_secret: # discord oauth2 secret
+  public_key: # discord bot public key
+
+anilist:
+  client_id: # anilist client id
+  client_secret: # anilist client secret
+
+db:
+  type: sqlite # sqlite, postgresql
+
+  # sqlite
+  path: ./data.db # sqlite database path
+
+  # postgresql
+  host: localhost # postgresql host
+  port: 5432 # postgresql port
+  user: # postgresql user
+  password: # postgresql password
+  database: # postgresql database
+  ssl_mode: disable # postgresql ssl mode (disable, require, verify-ca, verify-full)
