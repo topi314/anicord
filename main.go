@@ -1,95 +1,104 @@
 package main
 
 import (
+	"context"
+	_ "embed"
+	"flag"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/disgoorg/disgo"
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/httpserver"
 	"github.com/disgoorg/disgo/oauth2"
-	"github.com/disgoorg/log"
-	"github.com/robfig/cron/v3"
-	xoauth2 "golang.org/x/oauth2"
+	"github.com/lmittmann/tint"
+	"github.com/topi314/anicord/anicord"
 )
 
 var (
-	discordToken        = os.Getenv("DISCORD_TOKEN")
-	discordClientSecret = os.Getenv("DISCORD_CLIENT_SECRET")
-	discordPublicKey    = os.Getenv("DISCORD_PUBLIC_KEY")
-	baseURL             = os.Getenv("BASE_URL")
-	listenAddr          = os.Getenv("LISTEN_ADDR")
+	//go:embed sql/schema.sql
+	schema string
 
-	anilistClientID     = os.Getenv("ANILIST_CLIENT_ID")
-	anilistClientSecret = os.Getenv("ANILIST_CLIENT_SECRET")
-
-	letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	//go:embed anilist.gql
+	anilistQuery string
 )
 
 func main() {
-	log.SetLevel(log.LevelInfo)
-	log.Info("starting Anicord...")
-	log.Infof("disgo %s", disgo.Version)
+	path := flag.String("config", "config.yml", "path to config.yml")
+	flag.Parse()
+
+	cfg, err := anicord.ReadConfig(*path)
+	if err != nil {
+		slog.Error("failed to read config", tint.Err(err))
+		os.Exit(-1)
+	}
+	setupLogger(cfg.Log)
+
+	slog.Info("starting Anicord...")
+	slog.Info("disgo version: ", slog.String("version", disgo.Version))
 
 	mux := http.NewServeMux()
 
-	client, err := disgo.New(discordToken,
-		bot.WithHTTPServerConfigOpts(discordPublicKey,
+	client, err := disgo.New(cfg.Discord.Token,
+		bot.WithHTTPServerConfigOpts(cfg.Discord.PublicKey,
 			httpserver.WithServeMux(mux),
-			httpserver.WithAddress(listenAddr),
+			httpserver.WithAddress(cfg.Server.ListenAddr),
 		),
 	)
 	if err != nil {
-		log.Panic(err)
+		slog.Error("error while creating disgo client", tint.Err(err))
+		os.Exit(-1)
 	}
-	oauth2Client := oauth2.New(client.ApplicationID(), discordClientSecret)
+	oauth2Client := oauth2.New(client.ApplicationID(), cfg.Discord.ClientSecret)
 
-	db, err := NewDB()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	db, err := anicord.NewDB(ctx, cfg.DB, schema)
 	if err != nil {
-		log.Panic(err)
+		slog.Error("error while creating database", tint.Err(err))
+		os.Exit(-1)
 	}
 
-	a := &Anicord{
-		client: client,
-		oauth2: oauth2Client,
-		anilist: xoauth2.Config{
-			ClientID:     anilistClientID,
-			ClientSecret: anilistClientSecret,
-			Endpoint: xoauth2.Endpoint{
-				AuthURL:  "https://anilist.co/api/v2/oauth/authorize",
-				TokenURL: "https://anilist.co/api/v2/oauth/token",
-			},
-			RedirectURL: baseURL + "/anilist",
-			Scopes:      []string{},
-		},
-		rateLimiter: &RateLimiter{
-			Limit: 1,
-		},
-		db: db,
-		c:  cron.New(),
+	b := anicord.New(cfg, client, oauth2Client, db, anilistQuery)
+	if err = b.UpdateApplicationMetadata(); err != nil {
+		slog.Error("error while updating application metadata", tint.Err(err))
+		os.Exit(-1)
 	}
 
-	if err = a.updateApplicationMetadata(); err != nil {
-		log.Panic(err)
+	if err = b.SetupCron(); err != nil {
+		slog.Error("error while setting up cron", tint.Err(err))
+		os.Exit(-1)
 	}
 
-	if _, err = a.c.AddFunc("@every 12h", a.updateMetadata); err != nil {
-		log.Panic(err)
-	}
-
-	a.c.Start()
-
-	mux.HandleFunc("/verify", a.handleVerify)
-	mux.HandleFunc("/discord", a.handleDiscord)
-	mux.HandleFunc("/anilist", a.handleAnilist)
+	b.SetupRoutes(mux)
 	if err = client.OpenHTTPServer(); err != nil {
-		log.Panic(err)
+		slog.Error("error while opening http server", tint.Err(err))
+		os.Exit(-1)
 	}
 
-	log.Info("Anicord is now running. Press CTRL-C to exit.")
+	slog.Info("Anicord is now running. Press CTRL-C to exit.")
 	s := make(chan os.Signal, 1)
 	signal.Notify(s, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-s
+}
+
+func setupLogger(cfg anicord.LogConfig) {
+	var handler slog.Handler
+	if cfg.Format == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			AddSource: cfg.AddSource,
+			Level:     cfg.Level,
+		})
+	} else {
+		handler = tint.NewHandler(os.Stdout, &tint.Options{
+			AddSource: cfg.AddSource,
+			Level:     cfg.Level,
+			NoColor:   cfg.NoColor,
+		})
+	}
+	slog.SetDefault(slog.New(handler))
 }

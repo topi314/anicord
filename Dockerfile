@@ -1,4 +1,4 @@
-FROM golang:1.19-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS build
 
 WORKDIR /build
 
@@ -8,14 +8,20 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 go build -o app .
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg \
+    CGO_ENABLED=0 \
+    GOOS=$TARGETOS \
+    GOARCH=$TARGETARCH \
+    go build -o anicord-bot github.com/topi314/anicord
 
 FROM alpine
 
-WORKDIR /app
+COPY --from=build /build/anicord-bot /bin/anicord
 
-COPY --from=build /build/app /app/bin
+ENTRYPOINT ["/bin/anicord"]
 
-EXPOSE 80
-
-ENTRYPOINT ["/app/bin"]
+CMD ["-config", "/var/lib/anicord.yml"]
