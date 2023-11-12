@@ -170,7 +170,22 @@ func (b *Bot) updateUserMetadata(ctx context.Context, user User) error {
 		return fmt.Errorf("error while executing gql request: %v", errStr)
 	}
 
-	_, err = b.oauth2.UpdateApplicationRoleConnection(user.Session(), b.client.ApplicationID(), discord.ApplicationRoleConnectionUpdate{
+	session := user.Session()
+	newSession, err := b.oauth2.VerifySession(session)
+	if err != nil {
+		return fmt.Errorf("error while verifying session: %w", err)
+	}
+
+	if newSession.AccessToken != session.AccessToken {
+		user.DiscordAccessToken = newSession.AccessToken
+		user.DiscordRefreshToken = newSession.RefreshToken
+		user.DiscordExpiry = newSession.Expiration
+		if err = b.db.AddUser(ctx, user); err != nil {
+			return fmt.Errorf("error while updating user: %w", err)
+		}
+	}
+
+	_, err = b.oauth2.UpdateApplicationRoleConnection(newSession, b.client.ApplicationID(), discord.ApplicationRoleConnectionUpdate{
 		PlatformName:     json.Ptr("Anilist"),
 		PlatformUsername: &v.Data.Viewer.Name,
 		Metadata: &map[string]string{
