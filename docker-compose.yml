@@ -5,7 +5,7 @@ services:
         image: ghcr.io/topisenpai/anicord
         container_name: anicord-bot
         restart: unless-stopped
-        env_file:
-            - conf.env
+        volumes:
+            - ./config.yml:/var/lib/anicord.yml
         ports:
             - 80:80

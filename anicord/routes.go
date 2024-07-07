@@ -1,4 +1,4 @@
-package main
+package anicord
 
 import (
 	"math/rand"
@@ -7,11 +7,16 @@ import (
 	"github.com/disgoorg/disgo/discord"
 )
 
-func (a *Anicord) handleVerify(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, a.oauth2.GenerateAuthorizationURL(baseURL+"/discord", discord.PermissionsNone, 0, false, discord.OAuth2ScopeIdentify, discord.OAuth2ScopeRoleConnectionsWrite), http.StatusTemporaryRedirect)
+var (
+	discordOAuth2Scopes = []discord.OAuth2Scope{discord.OAuth2ScopeIdentify, discord.OAuth2ScopeRoleConnectionsWrite}
+	letters             = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+)
+
+func (b *Bot) handleVerify(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, b.oauth2.GenerateAuthorizationURL(b.cfg.Server.BaseURL+"/discord", discord.PermissionsNone, 0, false, discord.OAuth2ScopeIdentify, discord.OAuth2ScopeRoleConnectionsWrite), http.StatusTemporaryRedirect)
 }
 
-func (a *Anicord) handleDiscord(w http.ResponseWriter, r *http.Request) {
+func (b *Bot) handleDiscord(w http.ResponseWriter, r *http.Request) {
 	var (
 		query = r.URL.Query()
 		code  = query.Get("code")
@@ -22,17 +27,18 @@ func (a *Anicord) handleDiscord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	identifier := randStr(32)
-	_, err := a.oauth2.StartSession(code, state, identifier)
+	anilistState := randStr(32)
+	session, _, err := b.oauth2.StartSession(code, state)
 	if err != nil {
 		writeError(w, "error while starting session", err)
 		return
 	}
+	b.sessions[anilistState] = session
 
-	http.Redirect(w, r, a.anilist.AuthCodeURL(identifier), http.StatusTemporaryRedirect)
+	http.Redirect(w, r, b.anilist.AuthCodeURL(anilistState), http.StatusTemporaryRedirect)
 }
 
-func (a *Anicord) handleAnilist(w http.ResponseWriter, r *http.Request) {
+func (b *Bot) handleAnilist(w http.ResponseWriter, r *http.Request) {
 	var (
 		query = r.URL.Query()
 		code  = query.Get("code")
@@ -43,19 +49,19 @@ func (a *Anicord) handleAnilist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session := a.oauth2.SessionController().GetSession(state)
-	if session == nil {
+	session, ok := b.sessions[state]
+	if !ok {
 		writeError(w, "invalid session", nil)
 		return
 	}
 
-	discordUser, err := a.oauth2.GetUser(session)
+	discordUser, err := b.oauth2.GetUser(session)
 	if err != nil {
 		writeError(w, "error while getting user", err)
 		return
 	}
 
-	token, err := a.anilist.Exchange(r.Context(), code)
+	token, err := b.anilist.Exchange(r.Context(), code)
 	if err != nil {
 		writeError(w, "error while exchanging token", err)
 		return
@@ -63,19 +69,19 @@ func (a *Anicord) handleAnilist(w http.ResponseWriter, r *http.Request) {
 
 	user := User{
 		DiscordID:           discordUser.ID,
-		DiscordAccessToken:  session.AccessToken(),
-		DiscordRefreshToken: session.RefreshToken(),
-		DiscordExpiry:       session.Expiration(),
+		DiscordAccessToken:  session.AccessToken,
+		DiscordRefreshToken: session.RefreshToken,
+		DiscordExpiry:       session.Expiration,
 		AnilistAccessToken:  token.AccessToken,
 		AnilistRefreshToken: token.RefreshToken,
 		AnilistExpiry:       token.Expiry,
 	}
-	if err = a.db.CreateUser(user); err != nil {
+	if err = b.db.AddUser(r.Context(), user); err != nil {
 		writeError(w, "error while creating user in db", err)
 		return
 	}
 
-	if err = a.updateUserMetadata(r.Context(), user); err != nil {
+	if err = b.updateUserMetadata(r.Context(), user); err != nil {
 		writeError(w, "error while updating user metadata", err)
 		return
 	}
